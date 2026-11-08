@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.0.7 - ROM hash fallback verification
+
+- Added offline regression coverage confirming TheGamesDB fallback computes CRC32, MD5 and SHA-1 from ROM contents, scopes each request to the selected platform, and continues through the available hash types until artwork is found.
+
 ## v2.0.6 - Faster SD artwork scans
 
 - Reuse prebuilt Libretro lookup indexes during repeated SD ROM scans, reducing repeated sorting and normalization work without changing artwork ranking or matching behavior.
