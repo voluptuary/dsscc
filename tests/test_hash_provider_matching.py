@@ -1,5 +1,6 @@
 """Offline API-shape tests for opt-in hash-based provider matching."""
 import importlib.util
+import hashlib
 import io
 import sys
 import tempfile
@@ -48,6 +49,50 @@ def provider_app(tmp_path):
 
 
 class HashProviderTests(unittest.TestCase):
+    def test_thegamesdb_fallback_sends_hashes_computed_from_rom_file(self):
+        rom_data = b"abc"
+        with tempfile.TemporaryDirectory() as temp:
+            rom_path = Path(temp) / "renamed.nes"
+            rom_path.write_bytes(rom_data)
+            app = provider_app(temp)
+            app.ss_dev_id_var = Value("")
+            app.ss_dev_pass_var = Value("")
+            providers = APP_MODULE.Providers(app)
+            providers.thegamesdb_platform_id = Mock(return_value=18)
+            calls = []
+
+            def fake_request(url, _headers=None):
+                params = parse_qs(urlparse(url).query)
+                calls.append(params)
+                if params["filter[type]"] != ["sha1"]:
+                    return {"data": {"games": []}, "include": {"boxart": {}}}
+                return {
+                    "data": {"games": [{"id": 44, "game_title": "Recognized Game"}]},
+                    "include": {
+                        "boxart": {
+                            "base_url": {"original": "https://cdn.example/"},
+                            "data": {"44": [{"side": "front", "filename": "/images/front.png"}]},
+                        }
+                    },
+                }
+
+            with patch.object(APP_MODULE, "request_json", side_effect=fake_request), patch.object(
+                APP_MODULE, "fetch_bytes", return_value=png_bytes()
+            ):
+                results = providers.search_hash_fallback(rom_path, "Unknown Name", "Game Boy")
+
+        self.assertEqual([call["filter[type]"][0] for call in calls], ["crc", "md5", "sha1"])
+        self.assertEqual(
+            [call["hash"][0] for call in calls],
+            [
+                "352441C2",
+                hashlib.md5(rom_data).hexdigest(),
+                hashlib.sha1(rom_data).hexdigest(),
+            ],
+        )
+        self.assertTrue(all(call["filter[platform]"] == ["18"] for call in calls))
+        self.assertEqual(results[0].provider, "TheGamesDB")
+
     def test_thegamesdb_hash_endpoint_is_platform_and_hash_type_filtered(self):
         with tempfile.TemporaryDirectory() as temp:
             providers = APP_MODULE.Providers(provider_app(temp))
