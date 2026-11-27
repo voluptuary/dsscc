@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.8 - Atari 2600 support, artwork matching fixes, and Image Converter
+
+- Added complete Atari 2600 (`.a26`) thumbnail scraping and local-pack console folder support.
+- Fixed artwork cross-matching bugs between similar titles by preventing mismatched regional/variant artwork assignments and enforcing token compatibility.
+- Added a new **Image Converter** tab after ESV <-> SAV to import, crop/zoom, and export 16-bit GBA BMPs with full transparency support (`DST1` key).
+
 ## v2.0.7 - ROM hash fallback verification
 
 - Added offline regression coverage confirming TheGamesDB fallback computes CRC32, MD5 and SHA-1 from ROM contents, scopes each request to the selected platform, and continues through the available hash types until artwork is found.
