@@ -2328,7 +2328,8 @@ class ThumbnailScraperApp(tk.Tk):
         initial_width = min(1180, max(960, screen_width - 80))
         initial_height = min(830, max(620, screen_height - 80))
         self.geometry(f"{initial_width}x{initial_height}")
-        self.minsize(min(1040, initial_width), min(620, initial_height))
+        self.default_minimum_size = (min(1040, initial_width), min(620, initial_height))
+        self.minsize(*self.default_minimum_size)
         self.base_dir = app_dir()
         self._seed_bundled_cache()
         self._set_window_icon()
@@ -2659,7 +2660,7 @@ class ThumbnailScraperApp(tk.Tk):
         version_box = ttk.Frame(header, style="TFrame")
         version_box.pack(side="right", anchor="n")
         ttk.Label(version_box, text=f"{APP_NAME} v{APP_VERSION}", style="HeaderVersion.TLabel").pack(anchor="e")
-        ttk.Label(version_box, text="for DS Style Merkin Mix", style="HeaderVersion.TLabel").pack(anchor="e", pady=(4, 0))
+        ttk.Label(version_box, text="for DS Style Merkin's Mix", style="HeaderVersion.TLabel").pack(anchor="e", pady=(4, 0))
 
         notebook = ttk.Notebook(self)
         self.notebook = notebook
@@ -2670,7 +2671,7 @@ class ThumbnailScraperApp(tk.Tk):
         self.exceptions_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=14)
         self.settings_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=14)
         self.esv_sav_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=14)
-        self.image_converter_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=14)
+        self.image_converter_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=8)
         notebook.add(self.build_tab, text="GBA Pack")
         notebook.add(self.preview_tab, text="Search")
         notebook.add(self.custom_tab, text="Custom Pack")
@@ -3248,77 +3249,85 @@ class ThumbnailScraperApp(tk.Tk):
         ttk.Label(
             self.image_converter_tab,
             text=(
-                "Import an image, position it with the same Zoom and Move controls used by "
-                "the preview, then export a 16-bit .bmp the GBA kernel can display. "
-                "Transparent areas are preserved as the kernel's black color key."
+                "Crop and position an image, then export a GBA-ready 16-bit BMP. "
+                "Transparent areas use the kernel's black color key."
             ),
             style="Muted.TLabel",
-            wraplength=900,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 12))
+            wraplength=700,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 8))
 
         body = ttk.Frame(self.image_converter_tab, style="Panel.TFrame")
         body.grid(row=2, column=0, columnspan=2, sticky="nsew")
         body.columnconfigure(1, weight=1)
         body.rowconfigure(0, weight=1)
 
-        controls = ttk.Frame(body, style="Panel.TFrame", width=CONTROL_PANEL_WIDTH)
-        controls.grid(row=0, column=0, sticky="nw", padx=(0, 18))
+        controls_width = 220
+        controls = ttk.Frame(body, style="Panel.TFrame", width=controls_width)
+        controls.grid(row=0, column=0, sticky="nw", padx=(0, 12))
         controls.grid_propagate(False)
         ttk.Label(controls, text="Source", style="Section.TLabel").pack(anchor="w")
         ttk.Button(
             controls, text="Import Image…", command=self.choose_converter_image,
-        ).pack(fill="x", pady=(8, 4))
+        ).pack(fill="x", pady=(4, 2))
         self.converter_source_var = tk.StringVar(value="No image imported.")
         ttk.Label(
             controls,
             textvariable=self.converter_source_var,
             style="Muted.TLabel",
-            wraplength=CONTROL_PANEL_WIDTH - 10,
-        ).pack(anchor="w", pady=(0, 12))
+            wraplength=controls_width - 10,
+        ).pack(anchor="w", pady=(0, 5))
 
-        ttk.Label(controls, text="Output Size").pack(anchor="w", pady=(4, 4))
+        ttk.Label(controls, text="Output Size").pack(anchor="w", pady=(2, 2))
         converter_size_combo = ttk.Combobox(
             controls,
             textvariable=self.converter_size_var,
             values=["80x80", "120x80"],
             state="readonly",
-            width=24,
+            width=12,
         )
         converter_size_combo.pack(anchor="w")
         converter_size_combo.bind(
             "<<ComboboxSelected>>", lambda _event: self.update_converter_preview()
         )
 
-        ttk.Label(controls, text="Crop", style="Section.TLabel").pack(anchor="w", pady=(18, 8))
+        ttk.Label(controls, text="Crop", style="Section.TLabel").pack(anchor="w", pady=(8, 2))
         for label, var, from_, to in (
             ("Zoom", self.converter_zoom_var, 1.0, 3.0),
             ("Move X", self.converter_crop_x_var, -100, 100),
             ("Move Y", self.converter_crop_y_var, -100, 100),
         ):
-            ttk.Label(controls, text=label).pack(anchor="w", pady=(6, 0))
+            row = ttk.Frame(controls, style="Panel.TFrame")
+            row.pack(fill="x")
+            ttk.Label(row, text=label, width=6).pack(side="left", anchor="w")
             tk.Scale(
-                controls,
+                row,
                 variable=var,
                 from_=from_,
                 to=to,
                 resolution=0.05 if label == "Zoom" else 1,
                 orient="horizontal",
+                length=130,
+                width=10,
+                sliderlength=14,
                 bg="#152235",
                 fg="#edf4fb",
                 troughcolor="#101a29",
                 activebackground="#263a57",
                 highlightthickness=0,
+                borderwidth=0,
                 command=lambda _value: self.update_converter_preview(),
-            ).pack(fill="x")
+            ).pack(side="left", fill="x", expand=True)
+        actions = ttk.Frame(controls, style="Panel.TFrame")
+        actions.pack(fill="x", pady=(5, 0))
         ttk.Button(
-            controls, text="Reset Crop", command=self.reset_converter_crop,
-        ).pack(fill="x", pady=(12, 0))
+            actions, text="Reset Crop", command=self.reset_converter_crop,
+        ).pack(side="left", fill="x", expand=True)
         ttk.Button(
-            controls,
+            actions,
             text="Export .bmp…",
             style="Accent.TButton",
             command=self.export_converter_bmp,
-        ).pack(fill="x", pady=(18, 0))
+        ).pack(side="left", fill="x", expand=True, padx=(6, 0))
 
         preview = ttk.Frame(body, style="Panel.TFrame")
         preview.grid(row=0, column=1, sticky="nsew")
@@ -3328,8 +3337,8 @@ class ThumbnailScraperApp(tk.Tk):
             bg="#101a29",
             fg="#8fa1b5",
             text="Import an image to begin.",
-            width=360,
-            height=240,
+            width=240,
+            height=160,
         )
         self.converter_preview_label.pack(anchor="w", pady=(10, 0))
         self.converter_preview_info_var = tk.StringVar(
@@ -3339,7 +3348,7 @@ class ThumbnailScraperApp(tk.Tk):
             preview,
             textvariable=self.converter_preview_info_var,
             style="Muted.TLabel",
-        ).pack(anchor="w", pady=(10, 0))
+        ).pack(anchor="w", pady=(5, 0))
 
     def choose_converter_image(self):
         path = filedialog.askopenfilename(
@@ -3382,7 +3391,7 @@ class ThumbnailScraperApp(tk.Tk):
     def update_converter_preview(self):
         if self.converter_source_image is None:
             self.converter_preview_label.configure(
-                image="", text="Import an image to begin.", width=360, height=240
+                image="", text="Import an image to begin.", width=240, height=160
             )
             self.converter_preview_info_var.set("No image imported.")
             return
@@ -3392,7 +3401,7 @@ class ThumbnailScraperApp(tk.Tk):
             self.converter_preview_info_var.set(f"Could not render preview: {exc}")
             return
         width, height = thumb.size
-        preview = thumb.resize((width * 3, height * 3), Image.Resampling.NEAREST)
+        preview = thumb.resize((width * 2, height * 2), Image.Resampling.NEAREST)
         self.converter_preview_photo = ImageTk.PhotoImage(preview)
         self.converter_preview_label.configure(
             image=self.converter_preview_photo,
@@ -4320,7 +4329,14 @@ class ThumbnailScraperApp(tk.Tk):
 
     def on_tab_changed(self, event):
         notebook = event.widget
-        if notebook.tab(notebook.select(), "text") == "Custom Pack":
+        selected_tab = notebook.tab(notebook.select(), "text")
+        if selected_tab == "Image Converter":
+            # The converter's single-preview layout fits a smaller window than
+            # the artwork-building tabs, which use wider multi-panel layouts.
+            self.minsize(900, 580)
+        else:
+            self.minsize(*self.default_minimum_size)
+        if selected_tab == "Custom Pack":
             self.update_custom_preview()
 
     def update_local_pack_label(self):
@@ -4874,15 +4890,21 @@ class ThumbnailScraperApp(tk.Tk):
         ).grid(row=1, column=0, columnspan=2, sticky="w", padx=18, pady=(0, 14))
         ttk.Label(dialog, text="Artwork Type").grid(row=2, column=0, sticky="w", padx=(18, 8), pady=5)
         source_var = tk.StringVar(value="Box Art")
-        ttk.Combobox(
+        source_combo = ttk.Combobox(
             dialog,
             textvariable=source_var,
             values=list(LIBRETRO_SOURCE_FOLDERS),
             state="readonly",
             width=24,
-        ).grid(row=2, column=1, sticky="ew", padx=(8, 18), pady=5)
+        )
+        source_combo.grid(row=2, column=1, sticky="ew", padx=(8, 18), pady=5)
         ttk.Label(dialog, text="Thumbnail Sizes").grid(row=3, column=0, sticky="w", padx=(18, 8), pady=5)
-        sizes_var = tk.StringVar(value="Wide and square")
+        default_sizes = {
+            "Box Art": "Square, 80x80",
+            "Gameplay Screenshot": "Wide, 120x80",
+            "Title Screen": "Wide, 120x80",
+        }
+        sizes_var = tk.StringVar(value=default_sizes[source_var.get()])
         ttk.Combobox(
             dialog,
             textvariable=sizes_var,
@@ -4890,6 +4912,11 @@ class ThumbnailScraperApp(tk.Tk):
             state="readonly",
             width=24,
         ).grid(row=3, column=1, sticky="ew", padx=(8, 18), pady=5)
+
+        def choose_default_size(_event=None):
+            sizes_var.set(default_sizes.get(source_var.get(), "Wide, 120x80"))
+
+        source_combo.bind("<<ComboboxSelected>>", choose_default_size)
         include_gba_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             dialog,

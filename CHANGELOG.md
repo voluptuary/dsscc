@@ -5,6 +5,8 @@
 - Added complete Atari 2600 (`.a26`) thumbnail scraping and local-pack console folder support.
 - Fixed artwork cross-matching bugs between similar titles by preventing mismatched regional/variant artwork assignments and enforcing token compatibility.
 - Added a new **Image Converter** tab after ESV <-> SAV to import, crop/zoom, and export 16-bit GBA BMPs with full transparency support (`DST1` key).
+- Set Custom Pack SD scans to default to square `80x80` for Box Art and wide `120x80` for Title Screen artwork.
+- Made the Image Converter more compact and corrected the DS Style Merkin's Mix header subtitle.
 
 ## v2.0.7 - ROM hash fallback verification
 
