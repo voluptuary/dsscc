@@ -525,44 +525,62 @@ def _normalized_title(title: str) -> str:
     return re.sub(r"[^a-z0-9]", "", title.casefold())
 
 
+def _iter_gb_rom_paths(root: Path):
+    """Yield matching ROMs without keeping a path object per file in memory."""
+    for path in root.rglob("*"):
+        if path.suffix.casefold() in ROM_EXTENSIONS and path.is_file():
+            yield path
+
+
+def _rom_info_preference(info: GBRomInfo) -> tuple[str, int, int, bool]:
+    """Make duplicate title/checksum resolution stable without path sorting."""
+    return (
+        info.title.casefold(),
+        info.mapper_type,
+        info.ram_size if info.ram_size is not None else -1,
+        info.cgb_compatible,
+    )
+
+
 def scan_gb_rom_index(
     root: Path,
     progress_callback: Callable[[int, int, Path], None] | None = None,
 ) -> dict[str, dict[int, GBRomInfo]]:
-    """Index GB/GBC ROM checksums by normalized cartridge title."""
+    """Index GB/GBC ROM checksums by title, streaming paths for large libraries."""
     index: dict[str, dict[int, GBRomInfo]] = {}
     try:
-        rom_paths = sorted(
-            (path for path in root.rglob("*") if path.is_file() and path.suffix.casefold() in ROM_EXTENSIONS),
-            key=lambda path: str(path).casefold(),
-        )
+        # Count first to keep the existing determinate progress display without
+        # materializing and sorting every matching Path in memory.
+        total = sum(1 for _path in _iter_gb_rom_paths(root))
     except OSError as exc:
         raise ValueError(f"Could not scan the SD card for GB/GBC ROMs: {exc}") from exc
 
     if progress_callback is not None:
-        progress_callback(0, len(rom_paths), root)
-    for current, rom_path in enumerate(rom_paths, start=1):
-        try:
-            with rom_path.open("rb") as stream:
-                rom = stream.read(0x4000)
-            title = rom_title(rom)
-            checksum = rom_checksum(rom)
-            mapper_type = rom[0x147]
-            ram_size = GB_RAM_SIZES.get(rom[0x149])
-            cgb_compatible = bool(rom[0x143] & 0x80)
-        except (OSError, ValueError):
+        progress_callback(0, total, root)
+    try:
+        for current, rom_path in enumerate(_iter_gb_rom_paths(root), start=1):
+            try:
+                with rom_path.open("rb") as stream:
+                    rom = stream.read(0x4000)
+                title = rom_title(rom)
+                checksum = rom_checksum(rom)
+                mapper_type = rom[0x147]
+                ram_size = GB_RAM_SIZES.get(rom[0x149])
+                cgb_compatible = bool(rom[0x143] & 0x80)
+            except (OSError, ValueError):
+                if progress_callback is not None:
+                    progress_callback(current, total, rom_path)
+                continue
+            rom_info = GBRomInfo(title, checksum, mapper_type, ram_size, cgb_compatible)
+            for key in {_normalized_title(title), _normalized_title(rom_path.stem)} - {""}:
+                entries = index.setdefault(key, {})
+                previous = entries.get(checksum)
+                if previous is None or _rom_info_preference(rom_info) > _rom_info_preference(previous):
+                    entries[checksum] = rom_info
             if progress_callback is not None:
-                progress_callback(current, len(rom_paths), rom_path)
-            continue
-        rom_info = GBRomInfo(title, checksum, mapper_type, ram_size, cgb_compatible)
-        key = _normalized_title(title)
-        if key:
-            index.setdefault(key, {})[checksum] = rom_info
-        filename_key = _normalized_title(rom_path.stem)
-        if filename_key:
-            index.setdefault(filename_key, {})[checksum] = rom_info
-        if progress_callback is not None:
-            progress_callback(current, len(rom_paths), rom_path)
+                progress_callback(current, total, rom_path)
+    except OSError as exc:
+        raise ValueError(f"Could not scan the SD card for GB/GBC ROMs: {exc}") from exc
     return index
 
 

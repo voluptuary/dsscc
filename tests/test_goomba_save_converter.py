@@ -1,6 +1,8 @@
+import io
 import struct
 import tempfile
 import unittest
+from itertools import repeat
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,6 +40,29 @@ def config_misc_byte(archive):
 
 
 class GoombaSaveConverterTests(unittest.TestCase):
+    def test_rom_index_streams_more_than_one_hundred_thousand_paths(self):
+        rom = bytearray(0x4000)
+        rom[0x134:0x13A] = b"TETRIS"
+        path = Path("library") / "Tetris.gb"
+        progress = {"first": None, "last": None}
+
+        def report(current, total, current_path):
+            if progress["first"] is None:
+                progress["first"] = (current, total, current_path)
+            progress["last"] = (current, total, current_path)
+
+        with patch(
+            "goomba_save_converter._iter_gb_rom_paths",
+            side_effect=lambda _root: repeat(path, 100_001),
+        ), patch.object(
+            Path, "open", side_effect=lambda *_args, **_kwargs: io.BytesIO(rom)
+        ), patch("builtins.sorted", side_effect=AssertionError("full path sort used")):
+            index = scan_gb_rom_index(Path("library"), report)
+
+        self.assertIn("tetris", index)
+        self.assertEqual(progress["first"][:2], (0, 100_001))
+        self.assertEqual(progress["last"][:2], (100_001, 100_001))
+
     def test_bounded_file_read_stops_at_limit_plus_one(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "oversized.sav"

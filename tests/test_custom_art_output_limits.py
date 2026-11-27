@@ -14,6 +14,19 @@ SPEC.loader.exec_module(APP_MODULE)
 
 
 class CustomArtOutputLimitTests(unittest.TestCase):
+    def test_rejects_windows_reserved_device_names(self):
+        for name in (
+            "CON", "con.bmp", "NUL.preview", "PRN", "AUX", "COM1", "lpt9.bmp",
+            "CONIN$", "CONOUT$", "COM¹", "LPT³",
+        ):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "reserved Windows"):
+                APP_MODULE.validate_custom_art_name(name)
+
+    def test_allows_names_that_only_resemble_reserved_devices(self):
+        for name in ("CONSOLE", "COM0", "COM10", "LPT10", "NUL artwork"):
+            with self.subTest(name=name):
+                self.assertEqual(APP_MODULE.validate_custom_art_name(name), name)
+
     def test_limit_is_independent_for_title_and_box_art(self):
         counts = {
             "120x80": {f"title-{index}" for index in range(256)},

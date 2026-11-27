@@ -19,6 +19,7 @@ from ezflash_gba_thumbs import (
     prepare_image,
     positive_dimension,
     non_negative_int,
+    validate_output_size,
     write_ezflash_bmp,
 )
 from json_cache import write_json_atomic
@@ -111,7 +112,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        validate_output_size(args.width, args.height)
+    except ValueError as exc:
+        parser.error(str(exc))
     base_dir = app_dir()
     output_root = args.output or (base_dir / "IMGS")
     cache_dir = base_dir / "DS Style Thumbnail Scraper Cache"

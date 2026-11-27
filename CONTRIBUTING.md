@@ -1,6 +1,8 @@
 # Contributing
 
-Thank you for helping improve DS Style Thumbnail Scraper.
+Thank you for helping improve DS Style Card Companion.
+
+Repository orientation and implementation rules are in [`AGENTS.md`](AGENTS.md).
 
 ## Before Submitting Changes
 
@@ -8,6 +10,15 @@ Thank you for helping improve DS Style Thumbnail Scraper.
 - Do not commit generated executables, caches, output packs, or personal settings.
 - Test both `120 x 80` and `80 x 80` output where relevant.
 - Keep the application usable without provider accounts when using Libretro or a local artwork pack.
+- Keep local artwork packs read-only and preserve ROM names and output folder layouts.
+
+## Running the Tests
+
+Run the regression suite from the repository root:
+
+```powershell
+python -m unittest discover -s tests -v
+```
 
 ## Reporting Bugs
 

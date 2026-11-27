@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import re
 import struct
 import sys
@@ -10,6 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path
 from typing import Iterable
 
@@ -29,6 +31,9 @@ LIBRETRO_RAW = (
 
 DEFAULT_WIDTH = 80
 DEFAULT_HEIGHT = 80
+MAX_OUTPUT_DIMENSION = 4096
+MAX_OUTPUT_PIXELS = 16_000_000
+MAX_SOURCE_PIXELS = 16_000_000
 GBA_TITLE_OFFSET = 0xA0
 GBA_TITLE_LEN = 12
 GBA_CODE_OFFSET = 0xAC
@@ -37,11 +42,38 @@ MAX_HTTP_RESPONSE_BYTES = 25 * 1024 * 1024
 
 
 def positive_dimension(value: str) -> int:
-    """Parse a strictly positive image dimension for the GBA utilities."""
+    """Parse a positive image dimension within the safe output bounds."""
     dimension = int(value)
     if dimension <= 0:
         raise argparse.ArgumentTypeError("dimensions must be greater than zero")
+    if dimension > MAX_OUTPUT_DIMENSION:
+        raise argparse.ArgumentTypeError(
+            f"dimensions must be {MAX_OUTPUT_DIMENSION} pixels or smaller"
+        )
     return dimension
+
+
+def non_negative_dimension(value: str) -> int:
+    """Parse a bounded dimension where zero retains the source aspect ratio."""
+    dimension = int(value)
+    if dimension < 0:
+        raise argparse.ArgumentTypeError("dimensions must be zero or greater")
+    if dimension > MAX_OUTPUT_DIMENSION:
+        raise argparse.ArgumentTypeError(
+            f"dimensions must be {MAX_OUTPUT_DIMENSION} pixels or smaller"
+        )
+    return dimension
+
+
+def validate_output_size(width: int, height: int) -> None:
+    if width <= 0 or height <= 0:
+        raise ValueError("Output dimensions must be greater than zero.")
+    if width > MAX_OUTPUT_DIMENSION or height > MAX_OUTPUT_DIMENSION:
+        raise ValueError(f"Output dimensions cannot exceed {MAX_OUTPUT_DIMENSION} pixels.")
+    if width * height > MAX_OUTPUT_PIXELS:
+        raise ValueError(
+            f"Output images cannot exceed {MAX_OUTPUT_PIXELS:,} pixels."
+        )
 
 
 def non_negative_int(value: str) -> int:
@@ -288,12 +320,19 @@ def prepare_image(
     centering: tuple[float, float],
 ) -> Image.Image:
     with Image.open(io.BytesIO(image_data)) as image:
-        image = image.convert("RGB")
+        if image.width * image.height > MAX_SOURCE_PIXELS:
+            raise ValueError(
+                f"Source images cannot exceed {MAX_SOURCE_PIXELS:,} pixels."
+            )
         if width is None:
             ratio = height / image.height
             scaled_width = max(1, round(image.width * ratio))
+            validate_output_size(scaled_width, height)
+            image = image.convert("RGB")
             return image.resize((scaled_width, height), Image.Resampling.LANCZOS)
 
+        validate_output_size(width, height)
+        image = image.convert("RGB")
         size = (width, height)
         if fit == "contain":
             return ImageOps.pad(image, size, method=Image.Resampling.LANCZOS, color=(0, 0, 0))
@@ -314,6 +353,7 @@ def write_ezflash_bmp(image: Image.Image, path: Path, *, mark_transparency: bool
     or suppress the marker; by default it follows the image's alpha channel.
     """
     width, height = image.size
+    validate_output_size(width, height)
     if mark_transparency is None:
         mark_transparency = False
         if "A" in image.getbands():
@@ -374,13 +414,16 @@ def write_ezflash_bmp(image: Image.Image, path: Path, *, mark_transparency: bool
 def iter_gba_files(paths: Iterable[Path]) -> Iterable[Path]:
     for path in paths:
         if path.is_dir():
-            # Path.glob's case sensitivity differs by platform. Filter suffixes
-            # explicitly so .GBA files are found on Linux as well as Windows.
-            yield from (
-                candidate
-                for candidate in sorted(path.rglob("*"))
-                if candidate.suffix.casefold() == ".gba" and candidate.is_file()
-            )
+            # Keep the walk deterministic while yielding ROMs incrementally;
+            # collecting and sorting a library-wide Path list scales poorly.
+            for current, directories, filenames in os.walk(path):
+                directories.sort(key=str.casefold)
+                filenames.sort(key=str.casefold)
+                current_path = Path(current)
+                for filename in filenames:
+                    candidate = current_path / filename
+                    if candidate.suffix.casefold() == ".gba" and candidate.is_file():
+                        yield candidate
         elif path.suffix.lower() == ".gba":
             yield path
 
@@ -404,7 +447,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--width",
-        type=non_negative_int,
+        type=non_negative_dimension,
         default=DEFAULT_WIDTH,
         help="Thumbnail width. Use 0 to preserve box-art aspect ratio instead.",
     )
@@ -422,16 +465,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = sys.argv[1:] if argv is None else argv
-    args = build_parser().parse_args(raw_argv)
+    parser = build_parser()
+    args = parser.parse_args(raw_argv)
     if args.width == 0:
         args.width = None
+    if args.width is not None:
+        try:
+            validate_output_size(args.width, args.height)
+        except ValueError as exc:
+            parser.error(str(exc))
     base_dir = app_dir()
     scan_paths = args.roms or [base_dir]
     output_root = args.output or (base_dir / "IMGS")
     cache_path = base_dir / "DS Style Thumbnail Scraper Cache" / "libretro_gba_boxarts.json"
 
-    rom_paths = list(iter_gba_files(scan_paths))
-    if not rom_paths:
+    rom_paths = iter(iter_gba_files(scan_paths))
+    first_rom_path = next(rom_paths, None)
+    if first_rom_path is None:
         print("No .gba files found.", file=sys.stderr)
         return 1
 
@@ -443,7 +493,7 @@ def main(argv: list[str] | None = None) -> int:
 
     made = 0
     missed = 0
-    for rom_path in rom_paths:
+    for rom_path in chain((first_rom_path,), rom_paths):
         try:
             rom = read_rom_info(rom_path)
         except (OSError, ValueError) as exc:

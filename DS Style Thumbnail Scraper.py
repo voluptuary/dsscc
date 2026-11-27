@@ -1008,6 +1008,12 @@ def validate_custom_art_name(value: str) -> str:
         raise ValueError("Enter the file or folder name, or select a file.")
     if any(ch in name for ch in '<>:"/\\|?*'):
         raise ValueError('Custom art names cannot contain: < > : " / \\ | ? *')
+    windows_device_name = name.split(".", 1)[0].rstrip(" .").casefold()
+    if (
+        windows_device_name in {"con", "prn", "aux", "nul", "conin$", "conout$"}
+        or re.fullmatch(r"(?:com|lpt)(?:[1-9¹²³])", windows_device_name)
+    ):
+        raise ValueError("Custom art names cannot use reserved Windows device names.")
     if len(name) > 96:
         raise ValueError("Custom art names must be 96 characters or fewer.")
     return name
@@ -5002,9 +5008,10 @@ class ThumbnailScraperApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def supported_files_on_sd(self, root: Path, include_gba: bool, progress_callback=None) -> list[tuple[Path, str]]:
-        found: list[tuple[Path, str]] = []
+    def iter_supported_files_on_sd(self, root: Path, include_gba: bool, progress_callback=None):
+        """Yield supported ROM files incrementally in a stable directory walk."""
         folders_visited = 0
+        found_count = 0
         for current, directories, filenames in os.walk(root):
             folders_visited += 1
             directories[:] = [
@@ -5012,6 +5019,8 @@ class ThumbnailScraperApp(tk.Tk):
                 for name in directories
                 if not name.startswith(".") and name.casefold() not in SCAN_EXCLUDED_FOLDERS
             ]
+            directories.sort(key=str.casefold)
+            filenames.sort(key=str.casefold)
             current_path = Path(current)
             for filename in filenames:
                 if filename.startswith("."):
@@ -5022,22 +5031,26 @@ class ThumbnailScraperApp(tk.Tk):
                     continue
                 if path.name.casefold() in {"ezkernel.bin", "ezkernelnew.bin"}:
                     continue
-                found.append((path, system))
+                found_count += 1
+                yield path, system
             if progress_callback and (folders_visited == 1 or folders_visited % 8 == 0):
                 progress_callback(
                     "Scanning SD card folders",
                     None,
                     None,
-                    f"Folders visited: {folders_visited:,}; supported ROMs found: {len(found):,}",
+                    f"Folders visited: {folders_visited:,}; supported ROMs found: {found_count:,}",
                 )
         if progress_callback:
             progress_callback(
                 "SD card folder scan complete",
                 1,
                 1,
-                f"Found {len(found):,} supported ROM files in {folders_visited:,} folders.",
+                f"Found {found_count:,} supported ROM files in {folders_visited:,} folders.",
             )
-        return sorted(found, key=lambda item: str(item[0]).casefold())
+
+    def supported_files_on_sd(self, root: Path, include_gba: bool, progress_callback=None) -> list[tuple[Path, str]]:
+        """Compatibility wrapper for callers that need a materialized scan result."""
+        return list(self.iter_supported_files_on_sd(root, include_gba, progress_callback))
 
     def sd_scan_cache_path(self, source_folder: str, system: str, art_name: str) -> Path:
         """Stable on-disk cache path for an artwork source match.
@@ -5247,7 +5260,10 @@ class ThumbnailScraperApp(tk.Tk):
                 progress_callback(heading, current, total, detail)
 
         report("Scanning SD card folders", None, None, str(root))
-        files = self.supported_files_on_sd(
+        file_total = sum(
+            1 for _path, _system in self.iter_supported_files_on_sd(root, include_gba)
+        )
+        files = self.iter_supported_files_on_sd(
             root,
             include_gba,
             progress_callback=lambda heading, current=None, total=None, detail="": report(
@@ -5270,17 +5286,17 @@ class ThumbnailScraperApp(tk.Tk):
         seen_targets: set[str] = set()
 
         for number, (path, system) in enumerate(files, start=1):
-            if number == 1 or number % 10 == 0 or number == len(files):
+            if number == 1 or number % 10 == 0 or number == file_total:
                 report(
                     "Matching found games against Libretro",
                     number,
-                    max(1, len(files)),
+                    max(1, file_total),
                     f"{system}: {path.name}",
                 )
             if number == 1 or number % 20 == 0:
                 self.after(
                     0,
-                    lambda current=number, total=len(files): self.status_var.set(
+                    lambda current=number, total=file_total: self.status_var.set(
                         f"Matching found games... {current}/{total}"
                     ),
                 )
@@ -5862,7 +5878,7 @@ class ThumbnailScraperApp(tk.Tk):
                 )
 
         return {
-            "files": len(files),
+            "files": file_total,
             "matched_files": matched_files,
             "provider_matches": provider_matches,
             "additions": additions,

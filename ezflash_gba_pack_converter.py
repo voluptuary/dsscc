@@ -17,6 +17,7 @@ from ezflash_gba_thumbs import (
     regions_conflict,
     title_match_score,
     title_search_compatible,
+    validate_output_size,
     write_ezflash_bmp,
 )
 
@@ -124,7 +125,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        validate_output_size(args.width, args.height)
+    except ValueError as exc:
+        parser.error(str(exc))
     base_dir = app_dir()
     pack_root = args.pack or base_dir
     output_root = args.output or (base_dir / "IMGS")
