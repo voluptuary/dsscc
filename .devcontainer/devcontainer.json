@@ -1,0 +1,12 @@
+{
+  "name": "dsscc",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "postCreateCommand": "curl -fsSL https://opencode.ai/install | bash",
+  "remoteEnv": {
+    "PATH": "${containerEnv:PATH}:/home/vscode/.opencode/bin"
+  }
+}

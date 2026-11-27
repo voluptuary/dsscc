@@ -14,7 +14,9 @@ from ezflash_gba_thumbs import (
     output_path_for_code,
     prepare_image,
     positive_dimension,
+    regions_conflict,
     title_match_score,
+    title_search_compatible,
     write_ezflash_bmp,
 )
 
@@ -78,6 +80,10 @@ def find_best_art(title: str, art_index: dict[str, list[ArtFile]]) -> ArtFile | 
 
     for candidates in art_index.values():
         art = choose_preferred_art(candidates)
+        if not title_search_compatible(title, art.title):
+            continue
+        if regions_conflict(title, art.title):
+            continue
         score = title_match_score(title, art.title)
         if "(usa)" in art.path.name.casefold():
             score += 0.35

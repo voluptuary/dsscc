@@ -122,6 +122,7 @@ LIBRETRO_SYSTEMS = {
     "ColecoVision": {"repo": "Coleco_-_ColecoVision", "extensions": (".col",)},
     "Arcadia 2001": {"repo": "Emerson_-_Arcadia_2001", "extensions": (".arc",)},
     "Super Cassette Vision": {"repo": "Epoch_-_Super_Cassette_Vision", "extensions": (".sc",)},
+    "Atari 2600": {"repo": "Atari_-_2600", "extensions": (".a26",)},
 }
 SYSTEM_BY_EXTENSION = {
     extension: system
@@ -167,6 +168,7 @@ THEGAMESDB_PLATFORM_ALIASES = {
     "ColecoVision": ("Colecovision", "ColecoVision"),
     "Arcadia 2001": ("Emerson Arcadia 2001", "Arcadia 2001"),
     "Super Cassette Vision": ("Epoch Super Cassette Vision", "Super Cassette Vision"),
+    "Atari 2600": ("Atari 2600", "Atari 2600 VCS", "Atari Video Computer System"),
 }
 SCREENSCRAPER_SYSTEM_ALIASES = {
     "Game Boy Advance": ("Game Boy Advance", "Nintendo Game Boy Advance", "GBA"),
@@ -187,6 +189,7 @@ SCREENSCRAPER_SYSTEM_ALIASES = {
     "ColecoVision": ("ColecoVision", "Colecovision"),
     "Arcadia 2001": ("Arcadia 2001", "Emerson Arcadia 2001"),
     "Super Cassette Vision": ("Super Cassette Vision", "Epoch Super Cassette Vision"),
+    "Atari 2600": ("Atari 2600", "Atari 2600 VCS", "Atari Video Computer System"),
 }
 IGDB_PLATFORM_ALIASES = {
     "Game Boy Advance": ("Game Boy Advance", "Nintendo Game Boy Advance"),
@@ -207,6 +210,7 @@ IGDB_PLATFORM_ALIASES = {
     "ColecoVision": ("ColecoVision", "Colecovision"),
     "Arcadia 2001": ("Arcadia 2001",),
     "Super Cassette Vision": ("Super Cassette Vision",),
+    "Atari 2600": ("Atari 2600", "Atari 2600 VCS", "Atari Video Computer System"),
 }
 # Extra folder names that local media collections (LaunchBox, ES-DE, Batocera,
 # RetroPie, OnionOS, MiSTer, libretro-thumbnails and hand-sorted libraries) use to
@@ -283,6 +287,14 @@ LOCAL_PACK_DIRECTORY_ALIASES = {
         "NGP Color",
         "NGP Colour",
     ),
+    "Atari 2600": (
+        "Atari 2600 VCS",
+        "Atari VCS",
+        "Atari Video Computer System",
+        "Atari 2600 Video Computer System",
+        "Atari 2600 Jr",
+        "2600",
+    ),
 }
 # A bare brand name is only trusted when no console-specific folder appears
 # anywhere in the same path. "Nintendo/Game Boy/..." therefore resolves to Game Boy
@@ -309,7 +321,7 @@ LOCAL_PACK_OTHER_CONSOLE_FOLDERS = (
     "Sega Dreamcast", "Dreamcast",
     "PC Engine CD", "TurboGrafx CD", "TurboGrafx-16 CD", "SuperGrafx", "PC Engine SuperGrafx",
     "Neo Geo", "SNK Neo Geo", "Neo Geo AES", "Neo Geo MVS", "Neo Geo CD",
-    "Atari 2600", "Atari 5200", "Atari 7800", "Atari Lynx", "Lynx", "Atari Jaguar", "Jaguar",
+    "Atari 5200", "Atari 7800", "Atari Lynx", "Lynx", "Atari Jaguar", "Jaguar",
     "PlayStation", "Sony PlayStation", "PS1", "PSX", "PlayStation 2", "PS2", "PSP",
     "PlayStation Portable",
     "3DO", "Intellivision", "Mattel Intellivision", "Arcade", "MAME", "FBNeo",
@@ -681,6 +693,53 @@ def variant_rank(title: str) -> int:
     return rank
 
 
+def explicit_title_regions(title: str) -> set[str]:
+    """Return regions only when the title contains a parenthetical region tag."""
+    text = str(title or "")
+    if not re.search(
+        r"\((?:usa|us|europe|eu|japan|jp|world|australia|asia|brazil|canada|"
+        r"china|korea|taiwan|france|germany|italy|spain)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return set()
+    return title_regions(text)
+
+
+def choose_exact_art_name(
+    query: str,
+    names: list[str],
+    region_priority=None,
+) -> str | None:
+    """Choose the best filename when several normalize to the same title.
+
+    The normalized index intentionally merges revisions, regions, and status
+    tags, so a lookup key can hold more than one real release. Rank retail art
+    first, then the candidate whose explicit region matches the query, and only
+    then fall back to the caller's region preference and filename order.
+    """
+    if not names:
+        return None
+    query_regions = explicit_title_regions(query)
+
+    def preference(name: str) -> tuple:
+        candidate_regions = explicit_title_regions(name)
+        if query_regions and candidate_regions:
+            region_penalty = 0 if query_regions & candidate_regions else 2
+        elif query_regions:
+            region_penalty = 1
+        else:
+            region_penalty = 0
+        return (
+            variant_rank(name),
+            region_penalty,
+            region_priority(name) if region_priority else 0,
+            name.casefold(),
+        )
+
+    return min(names, key=preference)
+
+
 def provider_key(provider: str) -> str:
     if provider.startswith("IGDB"):
         return "IGDB"
@@ -993,7 +1052,7 @@ class Providers:
         self.libretro_indexes: dict[tuple[str, str], list[str]] = {}
         self.libretro_direct_indexes: dict[tuple, tuple[dict[str, str], list[str]]] = {}
         self.libretro_sd_indexes: dict[
-            tuple[str, str], tuple[dict[str, str], dict[str, str], list[str]]
+            tuple[str, str], tuple[dict[str, str], dict[str, list[str]], list[str]]
         ] = {}
         self.local_art_index = None
         self.local_art_index_root: Path | None = None
@@ -1198,20 +1257,22 @@ class Providers:
                 key=lambda name: (variant_rank(name), name.casefold()),
             )
             literal_index = {Path(name).stem.casefold(): name for name in allowed_index}
-            exact_index: dict[str, str] = {}
+            exact_groups: dict[str, list[str]] = {}
             for name in allowed_index:
-                exact_index.setdefault(normalize_for_match(name), name)
+                exact_groups.setdefault(normalize_for_match(name), []).append(name)
             self.libretro_sd_indexes[cache_key] = (
                 literal_index,
-                exact_index,
+                exact_groups,
                 allowed_index,
             )
-        literal_index, exact_index, allowed_index = self.libretro_sd_indexes[cache_key]
+        literal_index, exact_groups, allowed_index = self.libretro_sd_indexes[cache_key]
         exact_literal = literal_index.get(Path(query).stem.casefold())
         # Prefer retail art over an exact beta/prototype/hack filename.
         if exact_literal and variant_rank(exact_literal) == 0:
             return exact_literal
-        exact = exact_index.get(normalize_for_match(query)) or exact_literal
+        exact = choose_exact_art_name(
+            query, exact_groups.get(normalize_for_match(query), [])
+        ) or exact_literal
         if exact:
             return exact
         extension = LIBRETRO_SYSTEMS.get(system, LIBRETRO_SYSTEMS[DEFAULT_SYSTEM])["extensions"][0]
@@ -2373,6 +2434,12 @@ class ThumbnailScraperApp(tk.Tk):
         self.custom_zoom_var = tk.DoubleVar(value=1.0)
         self.custom_crop_x_var = tk.DoubleVar(value=0.0)
         self.custom_crop_y_var = tk.DoubleVar(value=0.0)
+        self.converter_size_var = tk.StringVar(value="80x80")
+        self.converter_zoom_var = tk.DoubleVar(value=1.0)
+        self.converter_crop_x_var = tk.DoubleVar(value=0.0)
+        self.converter_crop_y_var = tk.DoubleVar(value=0.0)
+        self.converter_source_image: Image.Image | None = None
+        self.converter_source_path: Path | None = None
 
         self._style()
         self._build_ui()
@@ -2603,11 +2670,13 @@ class ThumbnailScraperApp(tk.Tk):
         self.exceptions_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=14)
         self.settings_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=14)
         self.esv_sav_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=14)
+        self.image_converter_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=14)
         notebook.add(self.build_tab, text="GBA Pack")
         notebook.add(self.preview_tab, text="Search")
         notebook.add(self.custom_tab, text="Custom Pack")
         notebook.add(self.exceptions_tab, text="GBA Exceptions")
         notebook.add(self.esv_sav_tab, text="ESV <-> SAV")
+        notebook.add(self.image_converter_tab, text="Image Converter")
         notebook.add(self.settings_tab, text="Settings")
         notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
         self._build_build_tab()
@@ -2616,6 +2685,7 @@ class ThumbnailScraperApp(tk.Tk):
         self._build_exceptions_tab()
         self._build_settings_tab()
         self._build_esv_sav_tab()
+        self._build_image_converter_tab()
 
         footer = ttk.Frame(self, style="TFrame", padding=(18, 0, 18, 10))
         footer.configure(height=34)
@@ -3168,6 +3238,202 @@ class ThumbnailScraperApp(tk.Tk):
         ttk.Label(
             controls, textvariable=self.esv_scan_status_var, style="Muted.TLabel",
         ).pack(side="left", padx=(12, 0), fill="x", expand=True)
+
+    def _build_image_converter_tab(self):
+        self.image_converter_tab.columnconfigure(1, weight=1)
+        self.image_converter_tab.rowconfigure(2, weight=1)
+        ttk.Label(
+            self.image_converter_tab, text="Image to GBA BMP Converter", style="Section.TLabel",
+        ).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(
+            self.image_converter_tab,
+            text=(
+                "Import an image, position it with the same Zoom and Move controls used by "
+                "the preview, then export a 16-bit .bmp the GBA kernel can display. "
+                "Transparent areas are preserved as the kernel's black color key."
+            ),
+            style="Muted.TLabel",
+            wraplength=900,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 12))
+
+        body = ttk.Frame(self.image_converter_tab, style="Panel.TFrame")
+        body.grid(row=2, column=0, columnspan=2, sticky="nsew")
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        controls = ttk.Frame(body, style="Panel.TFrame", width=CONTROL_PANEL_WIDTH)
+        controls.grid(row=0, column=0, sticky="nw", padx=(0, 18))
+        controls.grid_propagate(False)
+        ttk.Label(controls, text="Source", style="Section.TLabel").pack(anchor="w")
+        ttk.Button(
+            controls, text="Import Image…", command=self.choose_converter_image,
+        ).pack(fill="x", pady=(8, 4))
+        self.converter_source_var = tk.StringVar(value="No image imported.")
+        ttk.Label(
+            controls,
+            textvariable=self.converter_source_var,
+            style="Muted.TLabel",
+            wraplength=CONTROL_PANEL_WIDTH - 10,
+        ).pack(anchor="w", pady=(0, 12))
+
+        ttk.Label(controls, text="Output Size").pack(anchor="w", pady=(4, 4))
+        converter_size_combo = ttk.Combobox(
+            controls,
+            textvariable=self.converter_size_var,
+            values=["80x80", "120x80"],
+            state="readonly",
+            width=24,
+        )
+        converter_size_combo.pack(anchor="w")
+        converter_size_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self.update_converter_preview()
+        )
+
+        ttk.Label(controls, text="Crop", style="Section.TLabel").pack(anchor="w", pady=(18, 8))
+        for label, var, from_, to in (
+            ("Zoom", self.converter_zoom_var, 1.0, 3.0),
+            ("Move X", self.converter_crop_x_var, -100, 100),
+            ("Move Y", self.converter_crop_y_var, -100, 100),
+        ):
+            ttk.Label(controls, text=label).pack(anchor="w", pady=(6, 0))
+            tk.Scale(
+                controls,
+                variable=var,
+                from_=from_,
+                to=to,
+                resolution=0.05 if label == "Zoom" else 1,
+                orient="horizontal",
+                bg="#152235",
+                fg="#edf4fb",
+                troughcolor="#101a29",
+                activebackground="#263a57",
+                highlightthickness=0,
+                command=lambda _value: self.update_converter_preview(),
+            ).pack(fill="x")
+        ttk.Button(
+            controls, text="Reset Crop", command=self.reset_converter_crop,
+        ).pack(fill="x", pady=(12, 0))
+        ttk.Button(
+            controls,
+            text="Export .bmp…",
+            style="Accent.TButton",
+            command=self.export_converter_bmp,
+        ).pack(fill="x", pady=(18, 0))
+
+        preview = ttk.Frame(body, style="Panel.TFrame")
+        preview.grid(row=0, column=1, sticky="nsew")
+        ttk.Label(preview, text="Preview", style="Section.TLabel").pack(anchor="w")
+        self.converter_preview_label = tk.Label(
+            preview,
+            bg="#101a29",
+            fg="#8fa1b5",
+            text="Import an image to begin.",
+            width=360,
+            height=240,
+        )
+        self.converter_preview_label.pack(anchor="w", pady=(10, 0))
+        self.converter_preview_info_var = tk.StringVar(
+            value="No image imported."
+        )
+        ttk.Label(
+            preview,
+            textvariable=self.converter_preview_info_var,
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(10, 0))
+
+    def choose_converter_image(self):
+        path = filedialog.askopenfilename(
+            title="Choose an image to convert",
+            filetypes=[
+                ("Images", "*.png *.jpg *.jpeg *.bmp *.webp *.gif *.tif *.tiff"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            with Image.open(path) as image:
+                self.converter_source_image = image.copy()
+        except (OSError, ValueError) as exc:
+            messagebox.showwarning(APP_NAME, f"Could not open that image:\n{exc}")
+            return
+        self.converter_source_path = Path(path)
+        self.converter_source_var.set(self.converter_source_path.name)
+        self.update_converter_preview()
+        self.status_var.set(f"Loaded image: {self.converter_source_path.name}")
+
+    def converter_render_size(self) -> tuple[int, int]:
+        if self.converter_size_var.get() == "120x80":
+            return 120, 80
+        return 80, 80
+
+    def render_converter_image(self) -> Image.Image:
+        width, height = self.converter_render_size()
+        if self.converter_source_image is None:
+            raise ValueError("Import an image first.")
+        return fit_image_to_canvas(
+            self.converter_source_image,
+            (width, height),
+            self.converter_zoom_var.get(),
+            self.converter_crop_x_var.get(),
+            self.converter_crop_y_var.get(),
+        )
+
+    def update_converter_preview(self):
+        if self.converter_source_image is None:
+            self.converter_preview_label.configure(
+                image="", text="Import an image to begin.", width=360, height=240
+            )
+            self.converter_preview_info_var.set("No image imported.")
+            return
+        try:
+            thumb = self.render_converter_image()
+        except (OSError, ValueError) as exc:
+            self.converter_preview_info_var.set(f"Could not render preview: {exc}")
+            return
+        width, height = thumb.size
+        preview = thumb.resize((width * 3, height * 3), Image.Resampling.NEAREST)
+        self.converter_preview_photo = ImageTk.PhotoImage(preview)
+        self.converter_preview_label.configure(
+            image=self.converter_preview_photo,
+            text="",
+            width=width * 3,
+            height=height * 3,
+        )
+        source_name = self.converter_source_path.name if self.converter_source_path else "image"
+        self.converter_preview_info_var.set(f"{source_name} - {width}x{height} BMP")
+
+    def reset_converter_crop(self):
+        self.converter_zoom_var.set(1.0)
+        self.converter_crop_x_var.set(0.0)
+        self.converter_crop_y_var.set(0.0)
+        self.update_converter_preview()
+
+    def export_converter_bmp(self):
+        if self.converter_source_image is None:
+            messagebox.showinfo(APP_NAME, "Import an image first.")
+            return
+        width, height = self.converter_render_size()
+        stem = self.converter_source_path.stem if self.converter_source_path else "image"
+        path = filedialog.asksaveasfilename(
+            title="Export GBA BMP",
+            defaultextension=".bmp",
+            initialfile=f"{stem}_{width}x{height}.bmp",
+            filetypes=[("BMP image", "*.bmp"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        target = Path(path)
+        if target.suffix.casefold() != ".bmp":
+            target = target.with_suffix(".bmp")
+        try:
+            thumb = self.render_converter_image()
+            write_ezflash_bmp(thumb, target)
+        except (OSError, ValueError) as exc:
+            messagebox.showwarning(APP_NAME, f"Could not export the image:\n{exc}")
+            return
+        self.status_var.set(f"Created {target.name} ({width}x{height}).")
+        messagebox.showinfo(APP_NAME, f"Created GBA BMP:\n{target}")
 
     def choose_esv_sd_root(self):
         selected = filedialog.askdirectory(title="Choose the root of the SD card")

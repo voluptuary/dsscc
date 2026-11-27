@@ -144,6 +144,10 @@ class FolderAliasTests(unittest.TestCase):
             "Game Boy (Color)": "Game Boy Color",
             "Game Boy [Color]": "Game Boy Color",
             "Game Boy (DMG)": "Game Boy",
+            "Atari 2600": "Atari 2600",
+            "Atari 2600 VCS": "Atari 2600",
+            "Atari VCS": "Atari 2600",
+            "2600": "Atari 2600",
             # Parenthesised noise on an otherwise known name still resolves.
             "NES (USA)": NES,
             "Nintendo (NES)": NES,
@@ -202,6 +206,7 @@ class CrossConsoleMatchingTests(unittest.TestCase):
             "Game Boy": "Game Gear",
             "Game Boy Color": "Game Gear",
             "Game Boy Advance": "Game Gear",
+            "Atari 2600": NES,
         }
         for system, aliases in APP_MODULE.LOCAL_PACK_DIRECTORY_ALIASES.items():
             for folder in aliases:

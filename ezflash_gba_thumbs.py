@@ -164,19 +164,82 @@ def title_match_score(raw_query: str, candidate: str) -> float:
     return score
 
 
+SEARCH_IGNORED_TITLE_TOKENS = {
+    "the",
+    "of",
+    "a",
+    "an",
+    "and",
+    "version",
+    "edition",
+}
+
+
+def title_search_compatible(raw_query: str, candidate: str) -> bool:
+    """Reject look-alike releases that only share a title prefix.
+
+    Unlike the fuzzy scorer, this requires the same meaningful title tokens, or
+    a candidate whose only extra words are filler such as "Version" or "Edition".
+    It stops a regional/unlicensed variant like "Tetris (USA) (Tengen) (Unl)"
+    from supplying artwork for plain "Tetris (USA)" and vice versa.
+    """
+    query_tokens = {
+        token
+        for token in tokens_for_match(raw_query)
+        if token not in SEARCH_IGNORED_TITLE_TOKENS and len(token) > 1
+    }
+    candidate_tokens = {
+        token
+        for token in tokens_for_match(candidate)
+        if token not in SEARCH_IGNORED_TITLE_TOKENS and len(token) > 1
+    }
+    if not query_tokens or not candidate_tokens:
+        return False
+    if query_tokens == candidate_tokens:
+        return True
+
+    normalized_query = normalize_for_match(raw_query)
+    normalized_candidate = normalize_for_match(candidate)
+    if normalized_query == normalized_candidate:
+        return True
+
+    if normalized_query and normalized_candidate.startswith(normalized_query):
+        suffix = normalized_candidate[len(normalized_query):]
+        suffix_tokens = set(re.findall(r"[a-z0-9]+", suffix.lower()))
+        return bool(suffix_tokens) and suffix_tokens <= SEARCH_IGNORED_TITLE_TOKENS
+
+    return False
+
+
+def regions_conflict(raw_query: str, candidate: str) -> bool:
+    query_regions = region_tokens(raw_query)
+    candidate_regions = region_tokens(candidate)
+    return bool(query_regions and candidate_regions and not (query_regions & candidate_regions))
+
+
+def _choose_exact_candidate(raw_query: str, names: list[str]) -> str:
+    """Prefer a matching-region filename when several normalize to one title."""
+    query_regions = region_tokens(raw_query)
+
+    def preference(name: str) -> int:
+        candidate_regions = region_tokens(name)
+        if query_regions and candidate_regions:
+            return 0 if query_regions & candidate_regions else 1
+        return 0
+
+    return min(names, key=preference)
+
+
 def find_boxart_name(rom: RomInfo, index: Iterable[str]) -> str | None:
-    queries = [
-        normalize_for_match(rom.path.name),
-        normalize_for_match(rom.title),
-    ]
     candidates = [(normalize_for_match(name), name) for name in index]
 
-    for query in queries:
+    for raw_query in (rom.path.name, rom.title):
+        query = normalize_for_match(raw_query)
         if not query:
             continue
-        for normalized, name in candidates:
-            if normalized == query:
-                return name
+        exact = [name for normalized, name in candidates if normalized == query]
+        if exact:
+            return _choose_exact_candidate(raw_query, exact)
 
     best_score = 0.0
     best_name: str | None = None
@@ -185,6 +248,10 @@ def find_boxart_name(rom: RomInfo, index: Iterable[str]) -> str | None:
             continue
 
         for _, name in candidates:
+            if not title_search_compatible(raw_query, name):
+                continue
+            if regions_conflict(raw_query, name):
+                continue
             score = title_match_score(raw_query, name)
 
             if score > best_score:
