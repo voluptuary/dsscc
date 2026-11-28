@@ -12,6 +12,7 @@
 - Fixed SD scans to use exact local-media artwork before stale cached, online, or fallback results; release tags, release-named folders, and region labels now disambiguate similarly named games without relying on alphabetical order.
 - Preserved periods and numbered subtitles during artwork matching so similarly prefixed games no longer collapse to the first alphabetical title.
 - Kept exclamation marks and percentage signs meaningful in title matching, matched accented and unaccented spellings consistently, and retained the existing `&`/“and” equivalence.
+- Kept SD scans running when Tk rejects a queued progress update during display sleep or wake; scan failure warnings now include a useful exception label and fallback detail.
 
 ## v2.0.7 - ROM hash fallback verification
 

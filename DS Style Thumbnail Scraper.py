@@ -4237,10 +4237,16 @@ class ThumbnailScraperApp(tk.Tk):
     ):
         """Queue progress updates from worker threads onto Tk's main thread."""
         def update():
-            window = getattr(self, window_attribute, None)
-            if window is not None:
-                window.update_progress(heading, current, total, detail)
-            self.status_var.set(f"{heading} — {detail}" if detail else heading)
+            try:
+                window = getattr(self, window_attribute, None)
+                if window is not None:
+                    window.update_progress(heading, current, total, detail)
+                self.status_var.set(f"{heading} — {detail}" if detail else heading)
+            except tk.TclError:
+                # A sleeping or shutting-down Tk window can reject an already
+                # queued progress update. Progress is informational; it must
+                # never interrupt the background scan.
+                pass
 
         try:
             self.after(0, update)
@@ -5434,13 +5440,6 @@ class ThumbnailScraperApp(tk.Tk):
                     max(1, file_total),
                     f"{system}: {path.name}",
                 )
-            if number == 1 or number % 20 == 0:
-                self.after(
-                    0,
-                    lambda current=number, total=file_total: self.status_var.set(
-                        f"Matching found games... {current}/{total}"
-                    ),
-                )
             try:
                 target_name = validate_custom_art_name(path.stem)
             except ValueError:
@@ -6062,7 +6061,13 @@ class ThumbnailScraperApp(tk.Tk):
         self.scan_running = False
         self.scan_sd_button.configure(state="normal")
         self.status_var.set("SD scan failed.")
-        messagebox.showwarning(APP_NAME, str(error))
+        detail = str(error).strip()
+        if not detail:
+            detail = "The error did not include additional details."
+        messagebox.showwarning(
+            APP_NAME,
+            f"SD scan failed ({type(error).__name__}).\n\n{detail}",
+        )
 
     def show_sd_scan_results(self, result: dict):
         unmatched_games = result.get("unmatched_games", [])
