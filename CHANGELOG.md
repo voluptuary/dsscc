@@ -10,6 +10,7 @@
 - Rejected Windows-reserved device names for custom artwork filenames so generated packs can be written safely on Windows.
 - Streamed ROM path discovery for SD card, GBA, and GB/GBC scans to keep large libraries usable without imposing a file-count limit; bounded generated image dimensions and pixel counts to prevent excessive memory use.
 - Fixed SD scans to use exact local-media artwork before stale cached, online, or fallback results; release tags, release-named folders, and region labels now disambiguate similarly named games without relying on alphabetical order.
+- Preserved periods and numbered subtitles during artwork matching so similarly prefixed games no longer collapse to the first alphabetical title.
 
 ## v2.0.7 - ROM hash fallback verification
 

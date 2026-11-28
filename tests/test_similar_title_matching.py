@@ -77,6 +77,26 @@ class SimilarTitleMatchingTests(unittest.TestCase):
         selected = providers.find_libretro_art_name("Pokemon FireRed (USA)", NES, FOLDER)
         self.assertEqual(selected, "Pokemon - FireRed Version (USA).png")
 
+    def test_period_numbered_arcade_classics_do_not_collapse_to_first_match(self):
+        titles = (
+            "Arcade Classic No. 1 - Asteroids & Missile Command (USA, Europe) (SGB Enhanced)",
+            "Arcade Classic No. 2 - Centipede & Millipede (USA, Europe) (SGB Enhanced)",
+            "Arcade Classic No. 3 - Galaga & Galaxian (USA) (SGB Enhanced)",
+            "Arcade Classic No. 4 - Defender & Joust (USA, Europe) (SGB Enhanced)",
+        )
+        providers = providers_for([f"{title}.png" for title in reversed(titles)])
+
+        self.assertEqual(
+            len({APP_MODULE.normalize_for_match(title) for title in titles}),
+            len(titles),
+        )
+        for title in titles:
+            with self.subTest(title=title):
+                self.assertEqual(
+                    providers.find_libretro_art_name(title, NES, FOLDER),
+                    f"{title}.png",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

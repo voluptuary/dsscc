@@ -31,6 +31,12 @@ LIBRETRO_RAW = (
 
 DEFAULT_WIDTH = 80
 DEFAULT_HEIGHT = 80
+TITLE_FILE_EXTENSIONS = {
+    ".gba", ".agb", ".bin", ".mb", ".gb", ".gbc", ".nes", ".sms",
+    ".gg", ".sg", ".pce", ".ngp", ".ngc", ".ngpc", ".ws", ".wsc",
+    ".rom", ".sv", ".z80", ".col", ".arc", ".sc", ".a26",
+    ".png", ".jpg", ".jpeg", ".bmp", ".webp",
+}
 MAX_OUTPUT_DIMENSION = 4096
 MAX_OUTPUT_PIXELS = 16_000_000
 MAX_SOURCE_PIXELS = 16_000_000
@@ -90,6 +96,15 @@ def app_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def title_filename(value: str | Path) -> str:
+    """Strip a supported file extension without treating title periods as suffixes."""
+    name = re.split(r"[\\/]", str(value))[-1]
+    suffix = Path(name).suffix.casefold()
+    if suffix in TITLE_FILE_EXTENSIONS:
+        return name[:-len(suffix)]
+    return name
+
+
 @dataclass(frozen=True)
 class RomInfo:
     path: Path
@@ -98,7 +113,12 @@ class RomInfo:
 
 
 def clean_title(value: str) -> str:
-    value = Path(value).stem
+    # Titles may legitimately contain periods (for example, "No. 1 - Game").
+    # Path.stem treats the last period in any string as a file extension, which
+    # silently erased everything after "No." on repeated normalization. Strip
+    # only file extensions the app actually supports, and make this operation
+    # safe to apply repeatedly to an already-cleaned title.
+    value = title_filename(value)
     value = strip_nointro_tags(value, preserve_regions=False)
     value = re.sub(r"\b(Rev|Beta|Proto|Demo|Hack|Fixed|Trashman)\b.*", " ", value, flags=re.I)
     value = value.replace("_", " ")

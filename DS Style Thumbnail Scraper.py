@@ -60,6 +60,7 @@ from ezflash_gba_thumbs import (
     normalize_for_match,
     output_path_for_code,
     title_match_score,
+    title_filename,
     tokens_for_match,
     write_ezflash_bmp,
 )
@@ -1294,7 +1295,7 @@ class Providers:
                 self.get_libretro_index(system, folder),
                 key=lambda name: (variant_rank(name), name.casefold()),
             )
-            literal_index = {Path(name).stem.casefold(): name for name in allowed_index}
+            literal_index = {title_filename(name).casefold(): name for name in allowed_index}
             exact_groups: dict[str, list[str]] = {}
             for name in allowed_index:
                 exact_groups.setdefault(normalize_for_match(name), []).append(name)
@@ -1304,7 +1305,7 @@ class Providers:
                 allowed_index,
             )
         literal_index, exact_groups, allowed_index = self.libretro_sd_indexes[cache_key]
-        exact_literal = literal_index.get(Path(query).stem.casefold())
+        exact_literal = literal_index.get(title_filename(query).casefold())
         # Prefer retail art over an exact beta/prototype/hack filename.
         if exact_literal and variant_rank(exact_literal) == 0:
             return exact_literal

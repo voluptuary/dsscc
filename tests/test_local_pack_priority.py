@@ -457,6 +457,56 @@ class LocalPackPriorityTests(unittest.TestCase):
             app.providers.search_fallback_many.assert_not_called()
             app.providers.search_hash_fallback.assert_not_called()
 
+    def test_sd_scan_keeps_period_numbered_arcade_classics_titles_distinct(self):
+        titles = (
+            "Arcade Classic No. 1 - Asteroids & Missile Command (USA, Europe) (SGB Enhanced)",
+            "Arcade Classic No. 2 - Centipede & Millipede (USA, Europe) (SGB Enhanced)",
+            "Arcade Classic No. 3 - Galaga & Galaxian (USA) (SGB Enhanced)",
+            "Arcade Classic No. 4 - Defender & Joust (USA, Europe) (SGB Enhanced)",
+        )
+        normalized_titles = {APP_MODULE.normalize_for_match(title) for title in titles}
+        self.assertEqual(len(normalized_titles), len(titles))
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            sd_root = base / "sd"
+            rom_folder = sd_root / "Nintendo" / "T"
+            rom_folder.mkdir(parents=True)
+            roms = {f"{title}.gbc": (index * 40, 255 - index * 30, index * 20)
+                    for index, title in enumerate(titles, start=1)}
+            for filename in roms:
+                (rom_folder / filename).touch()
+
+            local_pack = base / "Media" / "Nintendo"
+            local_pack.mkdir(parents=True)
+            art_data = {}
+            for filename, color in roms.items():
+                art = local_pack / f"{Path(filename).stem}.png"
+                art_data[filename] = png_bytes(color)
+                art.write_bytes(art_data[filename])
+
+            app = object.__new__(APP_MODULE.ThumbnailScraperApp)
+            app.base_dir = base / "app"
+            app.custom_roms = []
+            app.local_pack_priority_var = Value(False)
+            app.local_pack_var = Value(str(local_pack))
+            app.region_allowed = lambda _title: True
+            app.region_priority = lambda _title: 0
+            app.after = lambda _delay, callback: callback()
+            app.status_var = Value("Ready")
+            app.providers = APP_MODULE.Providers(app)
+            app.providers.find_libretro_art_name = Mock(side_effect=AssertionError("Online lookup should not run"))
+
+            result = APP_MODULE.ThumbnailScraperApp._scan_sd_worker(
+                app, sd_root, "Box Art", ["80x80"], False
+            )
+
+            selected_art = {
+                Path(item.rom_path).name: Path(item.image_path).read_bytes()
+                for item in result["additions"]
+            }
+            self.assertEqual(selected_art, art_data)
+            app.providers.find_libretro_art_name.assert_not_called()
+
     def test_overwrite_cache_refreshes_stale_copy_without_touching_source_file(self):
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / "Local Pack" / "GBA" / "Box Art" / "Tetris.png"
