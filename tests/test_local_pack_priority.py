@@ -507,6 +507,37 @@ class LocalPackPriorityTests(unittest.TestCase):
             self.assertEqual(selected_art, art_data)
             app.providers.find_libretro_art_name.assert_not_called()
 
+    def test_local_pack_matching_preserves_exclamation_and_percent_symbols(self):
+        names = (
+            "Game! (USA)",
+            "Game (USA)",
+            "100% Orange Juice (USA)",
+            "100 Orange Juice (USA)",
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "media"
+            root.mkdir()
+            expected = {}
+            for index, name in enumerate(names, start=1):
+                image = root / f"{name}.png"
+                expected[name] = png_bytes((index * 30, index * 20, index * 10))
+                image.write_bytes(expected[name])
+            app = SimpleNamespace(
+                local_pack_var=Value(str(root)),
+                region_allowed=lambda _title: True,
+                region_priority=lambda _title: 0,
+            )
+            providers = APP_MODULE.Providers(app)
+
+            for name in names:
+                with self.subTest(name=name):
+                    self.assertEqual(
+                        providers.search_local_pack_many(
+                            name, 1, "Nintendo Entertainment System", respect_regions=False
+                        )[0].image_data,
+                        expected[name],
+                    )
+
     def test_overwrite_cache_refreshes_stale_copy_without_touching_source_file(self):
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / "Local Pack" / "GBA" / "Box Art" / "Tetris.png"

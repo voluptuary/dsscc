@@ -97,6 +97,38 @@ class SimilarTitleMatchingTests(unittest.TestCase):
                     f"{title}.png",
                 )
 
+    def test_semantic_symbols_stay_distinct_while_ampersand_matches_and(self):
+        providers = providers_for([
+            "Game! (USA).png",
+            "Game (USA).png",
+            "100% Orange Juice (USA).png",
+            "100 Orange Juice (USA).png",
+        ])
+        self.assertEqual(
+            providers.find_libretro_art_name("Game! (USA)", NES, FOLDER),
+            "Game! (USA).png",
+        )
+        self.assertEqual(
+            providers.find_libretro_art_name("Game (USA)", NES, FOLDER),
+            "Game (USA).png",
+        )
+        self.assertEqual(
+            providers.find_libretro_art_name("100% Orange Juice (USA)", NES, FOLDER),
+            "100% Orange Juice (USA).png",
+        )
+        self.assertEqual(
+            providers.find_libretro_art_name("100 Orange Juice (USA)", NES, FOLDER),
+            "100 Orange Juice (USA).png",
+        )
+        self.assertEqual(
+            APP_MODULE.normalize_for_match("Rock & Roll"),
+            APP_MODULE.normalize_for_match("Rock and Roll"),
+        )
+        self.assertEqual(
+            APP_MODULE.normalize_for_match("Pokémon"),
+            APP_MODULE.normalize_for_match("Pokemon"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

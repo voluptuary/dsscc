@@ -7,6 +7,7 @@ import os
 import re
 import struct
 import sys
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -126,15 +127,28 @@ def clean_title(value: str) -> str:
     return value.strip(" -_.")
 
 
-def normalize_for_match(value: str) -> str:
+def _title_match_text(value: str) -> str:
     value = clean_title(value).lower()
-    value = value.replace("&", "and")
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(
+        character for character in value if not unicodedata.combining(character)
+    )
+    value = (
+        value.replace("&", "and")
+        .replace("%", " percent ")
+        .replace("!", " exclamation ")
+    )
+    return value
+
+
+def normalize_for_match(value: str) -> str:
+    value = _title_match_text(value)
     value = re.sub(r"[^a-z0-9]+", "", value)
     return value
 
 
 def tokens_for_match(value: str) -> set[str]:
-    value = clean_title(value).lower().replace("&", "and")
+    value = _title_match_text(value)
     return set(re.findall(r"[a-z0-9]+", value))
 
 
