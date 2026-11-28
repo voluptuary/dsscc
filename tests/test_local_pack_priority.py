@@ -141,6 +141,154 @@ class LocalPackPriorityTests(unittest.TestCase):
             self.assertNotIn("Nintendo Entertainment System", result.label)
             self.assertEqual({path: path.read_bytes() for path in root.rglob("*") if path.is_file()}, original_files)
 
+    def test_release_named_folders_disambiguate_identical_local_image_filenames(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "media"
+            tengen = root / "Nintendo Entertainment System" / "Tetris (USA) (Tengen) (Unl)" / "Tetris.png"
+            retail = root / "Nintendo Entertainment System" / "Tetris (USA)" / "Tetris.png"
+            tengen.parent.mkdir(parents=True)
+            retail.parent.mkdir(parents=True)
+            tengen_data = png_bytes((210, 20, 20))
+            retail_data = png_bytes((20, 180, 40))
+            tengen.write_bytes(tengen_data)
+            retail.write_bytes(retail_data)
+            app = SimpleNamespace(
+                local_pack_var=Value(str(root)),
+                region_allowed=lambda _title: True,
+                region_priority=lambda _title: 0,
+            )
+            providers = APP_MODULE.Providers(app)
+
+            tengen_result = providers.search_local_pack_many(
+                "Tetris (USA) (Tengen) (Unl)",
+                max_results=1,
+                system="Nintendo Entertainment System",
+                respect_regions=False,
+            )[0]
+            retail_result = providers.search_local_pack_many(
+                "Tetris (USA)",
+                max_results=1,
+                system="Nintendo Entertainment System",
+                respect_regions=False,
+            )[0]
+
+            self.assertEqual(tengen_result.image_data, tengen_data)
+            self.assertEqual(retail_result.image_data, retail_data)
+
+    def test_unlicensed_tengen_local_art_does_not_fall_through_to_plain_tetris(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "media"
+            root.mkdir()
+            variant = root / "Tetris (USA) (Tengen) (Unl).png"
+            variant.write_bytes(png_bytes((210, 20, 20)))
+            app = SimpleNamespace(
+                local_pack_var=Value(str(root)),
+                region_allowed=lambda _title: True,
+                region_priority=lambda _title: 0,
+            )
+
+            with self.assertRaisesRegex(LookupError, "No local art match"):
+                APP_MODULE.Providers(app).search_local_pack_many(
+                    "Tetris (USA)",
+                    max_results=1,
+                    system="Nintendo Entertainment System",
+                    respect_regions=False,
+                )
+
+    def test_status_variant_local_art_does_not_fall_through_to_plain_title(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "media"
+            root.mkdir()
+            beta = root / "Bubble Bobble (USA) (Beta 2).png"
+            beta.write_bytes(png_bytes((210, 20, 20)))
+            app = SimpleNamespace(
+                local_pack_var=Value(str(root)),
+                region_allowed=lambda _title: True,
+                region_priority=lambda _title: 0,
+            )
+
+            with self.assertRaisesRegex(LookupError, "No local art match"):
+                APP_MODULE.Providers(app).search_local_pack_many(
+                    "Bubble Bobble (USA)",
+                    max_results=1,
+                    system="Nintendo Entertainment System",
+                    respect_regions=False,
+                )
+
+    def test_exact_local_variant_matching_is_not_title_specific(self):
+        cases = (
+            (
+                "Bubble Bobble (USA) (Beta 2)",
+                "Bubble Bobble (USA)",
+                (210, 20, 20),
+                (20, 180, 40),
+            ),
+            (
+                "Pac-Man (USA) (Atari)",
+                "Pac-Man (USA)",
+                (20, 40, 210),
+                (210, 180, 20),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "media"
+            root.mkdir()
+            expected = {}
+            for variant, retail, variant_color, retail_color in cases:
+                variant_image = root / f"{variant}.png"
+                retail_image = root / f"{retail}.png"
+                expected[variant] = png_bytes(variant_color)
+                expected[retail] = png_bytes(retail_color)
+                variant_image.write_bytes(expected[variant])
+                retail_image.write_bytes(expected[retail])
+            app = SimpleNamespace(
+                local_pack_var=Value(str(root)),
+                region_allowed=lambda _title: True,
+                region_priority=lambda _title: 0,
+            )
+            providers = APP_MODULE.Providers(app)
+
+            for variant, retail, _variant_color, _retail_color in cases:
+                with self.subTest(variant=variant):
+                    self.assertEqual(
+                        providers.search_local_pack_many(
+                            variant, 1, "Nintendo Entertainment System", respect_regions=False
+                        )[0].image_data,
+                        expected[variant],
+                    )
+                    self.assertEqual(
+                        providers.search_local_pack_many(
+                            retail, 1, "Nintendo Entertainment System", respect_regions=False
+                        )[0].image_data,
+                        expected[retail],
+                    )
+
+    def test_local_pack_sd_lookup_prefers_matching_region_over_alphabetical_order(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "media"
+            europe = root / "Nintendo Entertainment System" / "Europe" / "Tetris.png"
+            usa = root / "Nintendo Entertainment System" / "USA" / "Tetris.png"
+            europe.parent.mkdir(parents=True)
+            usa.parent.mkdir(parents=True)
+            europe_data = png_bytes((210, 20, 20))
+            usa_data = png_bytes((20, 180, 40))
+            europe.write_bytes(europe_data)
+            usa.write_bytes(usa_data)
+            app = SimpleNamespace(
+                local_pack_var=Value(str(root)),
+                region_allowed=lambda _title: True,
+                region_priority=lambda _title: 0,
+            )
+
+            result = APP_MODULE.Providers(app).search_local_pack_many(
+                "Tetris (USA)",
+                max_results=1,
+                system="Nintendo Entertainment System",
+                respect_regions=False,
+            )[0]
+
+            self.assertEqual(result.image_data, usa_data)
+
     def test_priority_returns_local_art_before_selected_online_provider(self):
         app = SimpleNamespace(local_pack_priority_var=Value(True), local_pack_var=Value("unused"))
         providers = APP_MODULE.Providers(app)
@@ -237,6 +385,77 @@ class LocalPackPriorityTests(unittest.TestCase):
             self.assertEqual(local_source.read_bytes(), source_before)
             self.assertEqual(app.providers.online_calls, [])
             self.assertEqual(app.providers.hash_calls, [])
+
+    def test_sd_scan_uses_exact_local_filenames_even_when_fuzzy_priority_is_off(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            sd_root = base / "sd"
+            rom_folder = sd_root / "Nintendo" / "T"
+            rom_folder.mkdir(parents=True)
+            tengen_rom = rom_folder / "Tetris (USA) (Tengen) (Unl).nes"
+            retail_rom = rom_folder / "Tetris (USA).nes"
+            tengen_rom.touch()
+            retail_rom.touch()
+
+            local_pack = base / "Media" / "Nintendo"
+            local_pack.mkdir(parents=True)
+            tengen_art = local_pack / "Tetris (USA) (Tengen) (Unl).png"
+            retail_art = local_pack / "Tetris (USA).png"
+            tengen_data = png_bytes((210, 20, 20))
+            retail_data = png_bytes((20, 180, 40))
+            tengen_art.write_bytes(tengen_data)
+            retail_art.write_bytes(retail_data)
+
+            app = object.__new__(APP_MODULE.ThumbnailScraperApp)
+            app.base_dir = base / "app"
+            app.custom_roms = []
+            app.local_pack_priority_var = Value(False)
+            app.local_pack_var = Value(str(local_pack))
+            app.region_allowed = lambda _title: True
+            app.region_priority = lambda _title: 0
+            app.after = lambda _delay, callback: callback()
+            app.status_var = Value("Ready")
+            app.providers = APP_MODULE.Providers(app)
+            app.providers.find_libretro_art_name = Mock(side_effect=AssertionError("Online lookup should not run"))
+            app.providers.search_fallback_many = Mock(side_effect=AssertionError("Fallback should not run"))
+            app.providers.search_hash_fallback = Mock(side_effect=AssertionError("Hash lookup should not run"))
+            stale_cache = APP_MODULE.ThumbnailScraperApp.sd_scan_rom_cache_path(
+                app,
+                "Named_Boxarts",
+                "Nintendo Entertainment System",
+                "Nintendo/T/Tetris (USA).nes",
+            )
+            stale_cache.parent.mkdir(parents=True)
+            stale_cache.write_bytes(png_bytes((200, 10, 10)))
+            stale_output = (
+                sd_root
+                / "SYSTEM"
+                / "IMGS2"
+                / "Nintendo"
+                / "T"
+                / retail_rom.with_suffix(".bmp").name
+            )
+            write_ezflash_bmp(Image.new("RGB", (80, 80), (200, 10, 10)), stale_output)
+
+            result = APP_MODULE.ThumbnailScraperApp._scan_sd_worker(
+                app,
+                sd_root,
+                "Box Art",
+                ["80x80"],
+                True,
+                use_hash_matching=True,
+                auto_fallback=True,
+            )
+
+            art_by_rom = {
+                Path(item.rom_path).name: Path(item.image_path).read_bytes()
+                for item in result["additions"]
+            }
+            self.assertEqual(art_by_rom[tengen_rom.name], tengen_data)
+            self.assertEqual(art_by_rom[retail_rom.name], retail_data)
+            app.providers.find_libretro_art_name.assert_not_called()
+            app.providers.search_fallback_many.assert_not_called()
+            app.providers.search_hash_fallback.assert_not_called()
 
     def test_overwrite_cache_refreshes_stale_copy_without_touching_source_file(self):
         with tempfile.TemporaryDirectory() as temp:

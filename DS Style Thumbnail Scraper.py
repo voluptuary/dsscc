@@ -622,6 +622,38 @@ def content_tokens(value: str) -> set[str]:
     }
 
 
+LOCAL_RELEASE_VARIANT_TAGS = {
+    "alpha", "beta", "proto", "prototype", "demo", "sample", "unl",
+    "unlicensed", "alt", "alternate", "alternative", "hack", "mod",
+    "rom hack", "bootleg", "pirate", "randomizer", "fan translation",
+    "translation", "homebrew", "overdump", "bad dump", "bios",
+    "not for resale", "nfr", "virtual console",
+}
+
+
+def local_release_variant_tags(value: str) -> set[str]:
+    """Keep explicit non-retail markers visible during local-art matching."""
+    tags = set()
+    for raw_tag in re.findall(r"\(([^()]*)\)", Path(str(value)).name):
+        tag = re.sub(r"\s+", " ", raw_tag.strip().casefold())
+        if tag in LOCAL_RELEASE_VARIANT_TAGS:
+            tags.add(tag)
+        else:
+            numbered = re.fullmatch(
+                r"(alpha|beta|proto(?:type)?|demo|sample|hack|mod|alt)\s*\d+",
+                tag,
+            )
+            if numbered:
+                tags.add(numbered.group(1))
+    for raw_tag in re.findall(r"\[([^\]]*)\]", Path(str(value)).name):
+        tag = re.sub(r"\s+", "", raw_tag.casefold())
+        if re.fullmatch(r"h\d*", tag):
+            tags.add("hack")
+        elif re.fullmatch(r"t[+-][a-z]{2,5}", tag):
+            tags.add("translation")
+    return tags
+
+
 def title_search_compatible(query: str, candidate: str) -> bool:
     query_tokens = content_tokens(query)
     candidate_tokens = content_tokens(candidate)
@@ -1551,7 +1583,14 @@ class Providers:
                     if path_key in seen_paths:
                         continue
                     seen_paths.add(path_key)
-                    for token in content_tokens(art.title):
+                    try:
+                        parent_parts = art.path.relative_to(pack_path).parts[:-1]
+                    except ValueError:
+                        parent_parts = art.path.parts[:-1]
+                    indexed_tokens = set(content_tokens(art.title))
+                    for part in parent_parts:
+                        indexed_tokens.update(content_tokens(part))
+                    for token in indexed_tokens:
                         token_index.setdefault(token, []).append(art)
             self.local_art_token_indexes_by_system[index_key] = token_index
         token_index = self.local_art_token_indexes_by_system[index_key]
@@ -1567,40 +1606,116 @@ class Providers:
         elif query_tokens:
             token_buckets = [token_index.get(token, []) for token in query_tokens]
             rarest_bucket = min(token_buckets, key=len, default=[])
-            candidate_art_files = [
-                art for art in rarest_bucket
-                if query_tokens.issubset(content_tokens(art.title))
-            ]
+            candidate_art_files = []
+            for art in rarest_bucket:
+                try:
+                    parent_parts = art.path.relative_to(pack_path).parts[:-1]
+                except ValueError:
+                    parent_parts = art.path.parts[:-1]
+                art_tokens = set(content_tokens(art.title))
+                for part in parent_parts:
+                    art_tokens.update(content_tokens(part))
+                if query_tokens.issubset(art_tokens):
+                    candidate_art_files.append(art)
         else:
             candidate_art_files = [art for arts in search_index.values() for art in arts]
 
         candidates = []
+        release_context_mismatch = False
+        query_regions = explicit_title_regions(query)
+        query_variant_tags = local_release_variant_tags(query)
+        normalized_match_query = normalize_for_match(match_query)
         for art in candidate_art_files:
             if respect_regions and not self.app.region_allowed(self.local_art_region_text(art)):
                 continue
-            score = title_match_score(match_query, art.title)
-            if score >= 2.2 and title_search_compatible(match_query, art.title):
-                candidates.append((score, art))
+            try:
+                relative_parts = art.path.relative_to(pack_path).parts
+            except ValueError:
+                relative_parts = art.path.parts
+            parent_parts = relative_parts[:-1]
+            art_variant_tags = local_release_variant_tags(art.path.name)
+            for part in parent_parts:
+                if query_tokens.issubset(content_tokens(part)):
+                    art_variant_tags.update(local_release_variant_tags(part))
+            if art_variant_tags - query_variant_tags:
+                release_context_mismatch = True
+                continue
+            match_titles = [art.title, *parent_parts]
+            compatible_titles = [
+                title
+                for title in match_titles
+                if title_search_compatible(match_query, title)
+            ]
+            parent_compatible = any(
+                title_search_compatible(match_query, title)
+                for title in parent_parts
+            )
+            parent_repeats_query = any(
+                query_tokens.issubset(content_tokens(title))
+                for title in parent_parts
+            )
+            # A release-named folder is authoritative when it identifies this
+            # game but adds a distinguishing tag. Do not let a generic leaf such
+            # as "Tetris.png" erase that context for another release.
+            if parent_repeats_query and not parent_compatible:
+                release_context_mismatch = True
+                continue
+            score = max(
+                (title_match_score(match_query, title) for title in compatible_titles),
+                default=0.0,
+            )
+            if score >= 2.2:
+                parent_titles = [normalize_for_match(part) for part in parent_parts]
+                # Packs sometimes store identical image filenames in separate
+                # release-named folders (for example, Tetris (USA) and
+                # Tetris (USA) (Tengen)). Use that folder context to break a
+                # filename tie, while leaving generic folders such as "Box Art"
+                # and "Demos" out of title matching.
+                context_penalty = (
+                    0
+                    if normalized_match_query in parent_titles
+                    else 1
+                )
+                candidate_regions = title_regions(
+                    str(art.path.relative_to(pack_path))
+                    if art.path.is_relative_to(pack_path)
+                    else str(art.path)
+                )
+                if query_regions and candidate_regions:
+                    region_penalty = 0 if query_regions & candidate_regions else 2
+                elif query_regions:
+                    region_penalty = 1
+                else:
+                    region_penalty = 0
+                variant_penalty = (
+                    0
+                    if not query_variant_tags or query_variant_tags.issubset(art_variant_tags)
+                    else 1
+                )
+                candidates.append((score, region_penalty, context_penalty, variant_penalty, art))
         candidates.sort(
             key=lambda item: (
-                # Parent directories describe pack organization, not the
-                # release represented by this image.
-                variant_rank(item[1].path.name),
-                self.app.region_priority(self.local_art_region_text(item[1])) if respect_regions else 0,
+                # Prefer explicit release and region matches before generic
+                # retail ranking or alphabetical path order.
+                item[3],
+                item[1],
+                item[2],
+                variant_rank(item[4].path.name),
+                self.app.region_priority(self.local_art_region_text(item[4])) if respect_regions else 0,
                 -item[0],
-                item[1].path.name.casefold(),
+                item[4].path.as_posix().casefold(),
             ),
         )
-        if not candidates and (candidate_art_files or not query_tokens):
+        if not candidates and not release_context_mismatch and (candidate_art_files or not query_tokens):
             fallback_index = build_art_index(candidate_art_files) if query_tokens else search_index
             art = find_best_art(match_query, fallback_index)
             candidates = [
-                (99, art) for art in [art]
+                (99, 0, 1, 0, art) for art in [art]
                 if art and (not respect_regions or self.app.region_allowed(self.local_art_region_text(art)))
             ]
         limit = len(candidates) if max_results is None else max_results
         results = []
-        for _score, art in candidates[:limit]:
+        for _score, _region_penalty, _context_penalty, _variant_penalty, art in candidates[:limit]:
             if not art:
                 continue
             try:
@@ -1633,6 +1748,31 @@ class Providers:
             return str(art.path.relative_to(pack_path))
         except ValueError:
             return art.path.name
+
+    def local_art_result_is_exact_for_title(
+        self, result: ProviderResult, title: str, pack_path: Path
+    ) -> bool:
+        """Identify local images whose filename or release folder names this ROM exactly."""
+        if not result.source_path:
+            return False
+        normalized_title = normalize_for_match(strip_nointro_tags(title))
+        if not normalized_title:
+            return False
+        source_path = Path(result.source_path)
+        try:
+            relative_parts = source_path.relative_to(pack_path).parts
+        except ValueError:
+            relative_parts = (source_path.name,)
+        named_parts = [
+            part
+            for part in relative_parts
+            if normalize_for_match(part) == normalized_title
+        ]
+        source_variant_tags = local_release_variant_tags(source_path.name)
+        for part in relative_parts[:-1]:
+            if normalize_for_match(part) == normalized_title:
+                source_variant_tags.update(local_release_variant_tags(part))
+        return bool(named_parts) and local_release_variant_tags(title).issubset(source_variant_tags)
 
     def _igdb_auth_headers(self, force_refresh: bool = False) -> dict[str, str]:
         """Return IGDB API headers, refreshing an OAuth app token as needed.
@@ -5327,29 +5467,39 @@ class ThumbnailScraperApp(tk.Tk):
         pack_setting = app_state.get("local_pack_var")
         local_search = getattr(self.providers, "search_local_pack_many", None)
         local_priority_enabled = bool(priority_setting is not None and priority_setting.get())
-        if local_priority_enabled and pack_setting is not None and pack_setting.get().strip() and callable(local_search):
+        configured_local_pack = pack_setting.get().strip() if pack_setting is not None else ""
+        if configured_local_pack and callable(local_search):
+            local_pack_root = Path(configured_local_pack).expanduser()
             for local_index, candidate in enumerate(candidates, start=1):
                 if local_index == 1 or local_index % 20 == 0 or local_index == len(candidates):
                     report(
-                        "Searching local pack before cached/provider artwork",
+                        (
+                            "Searching local pack before cached/provider artwork"
+                            if local_priority_enabled
+                            else "Checking exact local artwork matches"
+                        ),
                         local_index,
                         max(1, len(candidates)),
                         f"{candidate.system}: {candidate.path.name}",
                     )
                 try:
-                    query_title = strip_nointro_tags(candidate.title)
                     try:
                         local_results = local_search(
-                            query_title, max_results=1, system=candidate.system,
+                            candidate.title, max_results=1, system=candidate.system,
                             respect_regions=False,
                         )
                     except TypeError:
-                        local_results = local_search(query_title, max_results=1, system=candidate.system)
-                    if local_results and is_valid_image_data(local_results[0].image_data):
-                        local_pack_matches[candidate.relative.casefold()] = local_results[0]
+                        local_results = local_search(candidate.title, max_results=1, system=candidate.system)
                 except Exception:
                     # A local miss is not fatal; continue with the normal cache/provider chain.
                     continue
+                if not local_results or not is_valid_image_data(local_results[0].image_data):
+                    continue
+                local_result = local_results[0]
+                if local_priority_enabled or self.providers.local_art_result_is_exact_for_title(
+                    local_result, candidate.title, local_pack_root
+                ):
+                    local_pack_matches[candidate.relative.casefold()] = local_result
 
         # Resolve candidate directories once per size; thousands of ROMs should
         # not trigger thousands of repeated directory listings.
